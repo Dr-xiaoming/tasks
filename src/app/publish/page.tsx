@@ -84,7 +84,12 @@ const PublishTaskPage: React.FC = () => {
 
       setTagLoading(true);
       
-      const apiKey = 'sk-d3ca3c767be24855bdaf786794a8701f';
+      const apiKey = process.env.NEXT_PUBLIC_DEEPSEEK_API_KEY;
+      if (!apiKey) {
+        message.error('未找到 API Key，请检查环境变量配置');
+        setTagLoading(false);
+        return;
+      }
       const messages = [
         {
           role: "user", 
