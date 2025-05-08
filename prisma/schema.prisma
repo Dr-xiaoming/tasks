@@ -1,0 +1,355 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql" // 修改为MySQL数据库
+  url      = env("DATABASE_URL")
+}
+
+// 添加枚举类型定义
+enum TaskStatus {
+  open
+  closed
+}
+
+// 添加任务领取状态枚举
+enum TaskClaimStatus {
+  active
+  cancelled
+  expired
+}
+
+// 交易类型枚举
+enum TransactionType {
+  RECHARGE
+  WITHDRAWAL
+  TASK_PAYMENT
+  task_reward  // 任务奖励交易类型
+}
+
+// 交易状态枚举
+enum TransactionStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+// 消息类型枚举
+enum MessageType {
+  text    @map("text")
+  system  @map("system")
+  reward  @map("reward")
+}
+
+// 技能等级枚举
+enum SkillLevel {
+  beginner      @map("beginner")
+  intermediate  @map("intermediate")
+  expert        @map("expert")
+}
+
+// 积分变更类型枚举
+enum PointsChangeType {
+  reward            @map("reward")        // 回答被采纳奖励
+  reward_payment    @map("reward_payment") // 支付任务奖励
+  reward_received   @map("reward_received") // 获得任务奖励
+  purchase          @map("purchase")      // 购买任务/商品
+  system            @map("system")        // 系统奖励/扣除
+  refund            @map("refund")        // 退款
+}
+
+model User {
+  id             Int            @id @default(autoincrement())
+  username       String         @unique
+  passwordHash   String         @map("password_hash")
+  points         Int            @default(0) @db.UnsignedInt
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+  
+  // 关系
+  tasks          Task[]
+  answers        Answer[]
+  sentMessages   Message[]      @relation("SentMessages")
+  conversations1 Conversation[] @relation("User1Conversations")
+  conversations2 Conversation[] @relation("User2Conversations")
+  transactions   Transaction[]  // 普通交易关系
+  sentTransactions Transaction[]  @relation("SentTransactions") // 作为发送方的交易
+  receivedTransactions Transaction[] @relation("ReceivedTransactions") // 作为接收方的交易
+  pointsHistory  PointsHistory[] // 积分历史记录关系
+  skills         UserSkill[]    // 用户技能关系
+  userTaskRequirements UserTaskRequirement[] // 用户任务需求进度关系
+  finalAnswers   FinalAnswer[]  // 添加与最终答案的关系
+  taskClaims     TaskClaim[]   // 添加与任务领取的关系
+
+  @@map("users")
+}
+
+model Transaction {
+  id            Int               @id @default(autoincrement())
+  userId        Int?              @map("user_id")
+  senderId      Int?              @map("sender_id")
+  receiverId    Int?              @map("receiver_id")
+  type          TransactionType
+  amount        Int               @db.UnsignedInt
+  status        TransactionStatus @default(PENDING)
+  paymentMethod String?           @map("payment_method") @db.VarChar(50)
+  taskId        Int?              @map("task_id")
+  answerId      Int?              @map("answer_id")
+  description   String?           @db.VarChar(255)
+  createdAt     DateTime          @default(now()) @map("created_at")
+  updatedAt     DateTime          @updatedAt @map("updated_at")
+  
+  // 关系
+  user          User?             @relation(fields: [userId], references: [id], onDelete: SetNull)
+  sender        User?             @relation("SentTransactions", fields: [senderId], references: [id], onDelete: SetNull)
+  receiver      User?             @relation("ReceivedTransactions", fields: [receiverId], references: [id], onDelete: SetNull)
+  task          Task?             @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  answer        Answer?           @relation(fields: [answerId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([senderId])
+  @@index([receiverId])
+  @@index([taskId])
+  @@index([answerId])
+  @@map("transactions")
+}
+
+model Task {
+  id              Int          @id @default(autoincrement())
+  userId          Int          @map("user_id")
+  title           String       @db.VarChar(255)
+  description     String?      @db.Text
+  points          Int          @db.UnsignedInt
+  status          TaskStatus   @default(open)
+  isExclusive Boolean @default(false) @map("is_exclusive")
+  adoptedAnswerId Int?         @map("adopted_answer_id")
+  adoptedUserId   Int?         @map("adopted_user_id")
+  completedAt     DateTime?    @map("completed_at")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
+  
+  // 关系
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  adoptedAnswer   Answer?      @relation("AdoptedAnswer", fields: [adoptedAnswerId], references: [id], onDelete: SetNull)
+  answers         Answer[]     @relation("TaskAnswers")
+  taskTags        TaskTag[]
+  conversations   Conversation[]
+  messages        Message[]    // 与消息的关系
+  pointsHistory   PointsHistory[] // 与积分历史的关系
+  transactions    Transaction[] // 与交易的关系
+  requirements    TaskRequirement[]
+  userRequirements UserTaskRequirement[] // 用户任务需求进度关系
+  finalAnswer     FinalAnswer?  // 新增：与最终答案的关系
+  taskClaims      TaskClaim[]   @relation("TaskToClaims")
+
+  @@index([userId])
+  @@index([adoptedAnswerId], map: "fk_adopted_answer")
+  @@map("tasks")
+}
+
+model Answer {
+  id          Int          @id @default(autoincrement())
+  taskId      Int          @map("task_id")
+  userId      Int          @map("user_id")
+  content     String       @db.Text
+  isAdopted   Boolean      @default(false) @map("is_adopted")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  
+  // 关系
+  task        Task         @relation("TaskAnswers", fields: [taskId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  adoptedFor  Task[]       @relation("AdoptedAnswer")
+  transactions Transaction[] // 与交易的关系
+  pointsHistory PointsHistory[] // 添加与积分历史的关系
+
+  @@index([taskId])
+  @@index([userId])
+  @@map("answers")
+}
+
+model Conversation {
+  id        Int       @id @default(autoincrement())
+  user1Id   Int       @map("user1_id")
+  user2Id   Int       @map("user2_id")
+  taskId    Int?      @map("task_id")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+  
+  // 关系
+  user1     User      @relation("User1Conversations", fields: [user1Id], references: [id], onDelete: Cascade)
+  user2     User      @relation("User2Conversations", fields: [user2Id], references: [id], onDelete: Cascade)
+  task      Task?     @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  messages  Message[]
+
+  @@unique([user1Id, user2Id, taskId], name: "uq_conversation")
+  @@index([user2Id])
+  @@index([taskId])
+  @@map("conversations")
+}
+
+model Message {
+  id             BigInt       @id @default(autoincrement())
+  conversationId Int          @map("conversation_id")
+  senderId       Int          @map("sender_id")
+  content        String       @db.Text
+  createdAt      DateTime     @default(now()) @map("created_at") @db.Timestamp(3)
+  isRead         Boolean      @default(false) @map("is_read")
+  type           MessageType  @default(text)    // 新增：消息类型字段
+  taskId         Int?         @map("task_id")  // 新增：关联任务字段
+  rewardPoints   Int?         @map("reward_points") // 新增：奖励积分字段
+  
+  // 关系
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender         User         @relation("SentMessages", fields: [senderId], references: [id], onDelete: Cascade)
+  task           Task?        @relation(fields: [taskId], references: [id], onDelete: SetNull) // 新增：关联任务关系
+
+  @@index([conversationId])
+  @@index([senderId])
+  @@index([taskId])
+  @@map("messages")
+}
+
+model Tag {
+  id        Int       @id @default(autoincrement())
+  name      String    @unique @db.VarChar(50)
+  
+  // 关系
+  taskTags  TaskTag[]
+
+  @@map("tags")
+}
+
+model TaskTag {
+  taskId    Int
+  tagId     Int
+  
+  // 关系
+  task      Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  tag       Tag       @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([taskId, tagId])
+  @@index([tagId])
+  @@map("task_tags")
+}
+
+// 新增：积分变更历史记录模型
+model PointsHistory {
+  id              Int             @id @default(autoincrement())
+  userId          Int             @map("user_id")
+  amount          Int             // 正数表示增加，负数表示减少
+  type            PointsChangeType
+  description     String?         @db.VarChar(255)
+  relatedTaskId   Int?            @map("related_task_id")
+  relatedAnswerId Int?            @map("related_answer_id")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  
+  // 关系
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task            Task?           @relation(fields: [relatedTaskId], references: [id], onDelete: SetNull)
+  answer          Answer?         @relation(fields: [relatedAnswerId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([relatedTaskId])
+  @@index([relatedAnswerId])
+  @@map("points_history")
+}
+
+// 用户技能模型
+model UserSkill {
+  id        Int        @id @default(autoincrement())
+  userId    Int        @map("user_id")
+  name      String     @db.VarChar(100)
+  level     SkillLevel
+  createdAt DateTime   @default(now()) @map("created_at")
+  updatedAt DateTime   @updatedAt @map("updated_at")
+  
+  // 关系
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("user_skills")
+}
+
+// 添加任务需求模型
+model TaskRequirement {
+  id          Int       @id @default(autoincrement())
+  taskId      Int       @map("task_id")
+  content     String    @db.VarChar(200)
+  completed   Boolean   @default(false)
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  
+  // 关系
+  task        Task      @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  userRequirements UserTaskRequirement[]
+
+  @@index([taskId])
+  @@map("task_requirements")
+}
+
+// 用户任务需求进度模型
+model UserTaskRequirement {
+  id              Int             @id @default(autoincrement())
+  userId          Int             @map("user_id")
+  taskId          Int             @map("task_id")
+  requirementId   Int             @map("requirement_id")
+  completed       Boolean         @default(false)
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+  
+  // 关系
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  task            Task            @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  requirement     TaskRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, requirementId])
+  @@index([userId])
+  @@index([taskId])
+  @@index([requirementId])
+  @@map("user_task_requirements")
+}
+
+// 新增：最终答案模型
+model FinalAnswer {
+  id          Int          @id @default(autoincrement())
+  taskId      Int          @unique @map("task_id")
+  userId      Int          @map("user_id")
+  content     String       @db.Text
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+  
+  // 关系
+  task        Task         @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([userId])
+  @@map("final_answers")
+}
+
+// 新增：任务领取模型
+model TaskClaim {
+  id          Int             @id @default(autoincrement())
+  taskId      Int             @map("task_id")
+  userId      Int             @map("user_id")
+  status      TaskClaimStatus @default(active)
+  createdAt   DateTime        @default(now()) @map("created_at")
+  expiresAt   DateTime?       @map("expires_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  
+  // 关系
+  task        Task            @relation("TaskToClaims", fields: [taskId], references: [id], onDelete: Cascade)
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([taskId])
+  @@index([userId])
+  // 移除这个唯一约束，在应用层控制
+  // @@unique([taskId, status])
+  @@map("task_claims")
+}
